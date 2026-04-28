@@ -1,0 +1,98 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and settings",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "firstName": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "limitRemaining": { "type": "number" },
+        "lastLimitReset": { "type": "number" },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "puterJsActive": { "type": "boolean" },
+            "geminiApiKey": { "type": "string" },
+            "deepseekApiKey": { "type": "string" },
+            "grokApiKey": { "type": "string" }
+          }
+        },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["uid", "email", "firstName", "role", "limitRemaining", "lastLimitReset", "createdAt", "updatedAt"]
+    },
+    "Chat": {
+      "title": "Chat",
+      "description": "A conversation thread between a user and the AI",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["userId", "title", "createdAt", "updatedAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A single message in a chat",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "ai"] },
+        "content": { "type": "string" },
+        "feedback": { "type": "string", "enum": ["like", "dislike", "none"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["userId", "role", "content", "createdAt"]
+    },
+    "AdminChat": {
+      "title": "AdminChat",
+      "description": "A conversation between a user and the admin",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["userId", "updatedAt"]
+    },
+    "AdminMessage": {
+      "title": "AdminMessage",
+      "description": "A message in the user-admin chat",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "content": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["senderId", "role", "content", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores user profiles"
+    },
+    "/chats/{chatId}": {
+      "schema": { "$ref": "#/entities/Chat" },
+      "description": "Stores AI chat threads"
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Stores messages within an AI chat thread"
+    },
+    "/adminChats/{userId}": {
+      "schema": { "$ref": "#/entities/AdminChat" },
+      "description": "Stores tracking for admin chats"
+    },
+    "/adminChats/{userId}/adminMessages/{messageId}": {
+      "schema": { "$ref": "#/entities/AdminMessage" },
+      "description": "Stores messages in the admin chat"
+    }
+  }
+}

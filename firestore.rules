@@ -1,0 +1,186 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // --- Validation Helpers ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'firstName', 'role', 'limitRemaining', 'lastLimitReset', 'createdAt', 'updatedAt']) 
+        && data.keys().size() <= 9
+        && data.uid == request.auth.uid
+        && data.email is string && data.email.size() <= 200
+        && data.firstName is string && data.firstName.size() <= 100
+        && data.role in ['user', 'admin']
+        && data.limitRemaining is number
+        && data.lastLimitReset is number
+        && ( !data.keys().hasAny(['settings']) || (data.settings is map && data.settings.keys().size() <= 10) )
+        && data.createdAt is number
+        && data.updatedAt is number;
+    }
+
+    function isValidChat(data) {
+      return data.keys().hasAll(['userId', 'title', 'createdAt', 'updatedAt']) 
+        && data.keys().size() <= 4
+        && data.userId == request.auth.uid
+        && data.title is string && data.title.size() <= 250
+        && data.createdAt is number
+        && data.updatedAt is number;
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['userId', 'role', 'content', 'createdAt']) 
+        && (data.keys().hasOnly(['userId', 'role', 'content', 'createdAt']) || data.keys().hasOnly(['userId', 'role', 'content', 'createdAt', 'feedback']))
+        && data.userId == request.auth.uid
+        && data.role in ['user', 'ai']
+        && data.content is string && data.content.size() <= 100000
+        && (!data.keys().hasAll(['feedback']) || data.feedback in ['like', 'dislike', 'none'])
+        && data.createdAt is number;
+    }
+
+    function isValidAdminChat(data) {
+      return data.keys().hasAll(['userId', 'updatedAt']) 
+        && data.keys().size() <= 2
+        && data.userId == request.auth.uid
+        && data.updatedAt is number;
+    }
+
+    function isValidAdminMessage(data) {
+      return data.keys().hasAll(['senderId', 'role', 'content', 'createdAt']) 
+        && data.keys().size() <= 4
+        && (data.senderId == request.auth.uid || isAdmin())
+        && data.role in ['user', 'admin']
+        && data.content is string && data.content.size() <= 10000
+        && data.createdAt is number;
+    }
+
+    // --- Collections ---
+    
+    // users
+    match /users/{userId} {
+      allow read: if isSignedIn() && (userId == request.auth.uid || isAdmin());
+      allow list: if isAdmin();
+      
+      allow create: if isSignedIn() 
+        && isValidId(userId)
+        && userId == request.auth.uid 
+        && isValidUser(incoming())
+        && incoming().createdAt == request.time.toMillis()
+        && incoming().updatedAt == request.time.toMillis();
+        
+      allow update: if isSignedIn() 
+        && (userId == request.auth.uid || isAdmin())
+        && isValidUser(incoming())
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time.toMillis()
+        && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['firstName', 'limitRemaining', 'lastLimitReset', 'settings', 'role', 'updatedAt'])
+        );
+    }
+
+    // chats
+    match /chats/{chatId} {
+      allow read, list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      
+      allow create: if isSignedIn() 
+        && isValidId(chatId)
+        && isValidChat(incoming())
+        && incoming().createdAt == request.time.toMillis()
+        && incoming().updatedAt == request.time.toMillis()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.uid == request.auth.uid;
+        
+      allow update: if isSignedIn() 
+        && existing().userId == request.auth.uid
+        && isValidChat(incoming())
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time.toMillis()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'updatedAt']);
+        
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+
+      // messages subcollection
+      match /messages/{messageId} {
+        allow read, list: if isSignedIn() && (get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid || isAdmin());
+        
+        allow create: if isSignedIn() 
+          && isValidId(messageId)
+          && isValidMessage(incoming())
+          && incoming().createdAt == request.time.toMillis()
+          && get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid;
+          
+        allow update: if isSignedIn()
+          && get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid
+          && isValidMessage(incoming())
+          && incoming().userId == existing().userId
+          && incoming().role == existing().role
+          && incoming().content == existing().content
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['feedback']);
+          
+        allow delete: if isSignedIn() && (get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid || isAdmin());
+      }
+    }
+
+    // adminChats (user id is the doc id)
+    match /adminChats/{userId} {
+      allow read, list: if isSignedIn() && (userId == request.auth.uid || isAdmin());
+      
+      allow create: if isSignedIn() 
+        && isValidId(userId)
+        && userId == request.auth.uid 
+        && isValidAdminChat(incoming())
+        && incoming().updatedAt == request.time.toMillis()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.uid == request.auth.uid;
+        
+      allow update: if isSignedIn() 
+        && (userId == request.auth.uid || isAdmin())
+        && isValidAdminChat(incoming())
+        && incoming().userId == existing().userId
+        && incoming().updatedAt == request.time.toMillis()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['updatedAt']);
+
+      // adminMessages subcollection
+      match /adminMessages/{messageId} {
+        allow read, list: if isSignedIn() && (userId == request.auth.uid || isAdmin());
+        
+        allow create: if isSignedIn() 
+          && isValidId(messageId)
+          && isValidAdminMessage(incoming())
+          && incoming().createdAt == request.time.toMillis()
+          && (userId == request.auth.uid || isAdmin());
+      }
+    }
+
+    // admins table to track admin role
+    match /admins/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && uid == request.auth.uid && incoming().password == '92728281919191991';
+      allow delete: if isAdmin();
+    }
+  }
+}
